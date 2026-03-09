@@ -4,6 +4,10 @@ import torch.nn.functional as F
 
 import triton
 import triton.language as tl
+import triton.testing as tt
+
+
+DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
 def pytorch_layer_norm(x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
     """
@@ -132,12 +136,12 @@ def compare_result():
     ]
 
     for shape in test_shapes:
-        x = torch.randn(*shape, device="cuda", requires_grad=False)
+        x = torch.randn(*shape, device=DEVICE, requires_grad=False)
         dim = x.shape[-1]
 
         # 共享一份 weight / bias（都不需要梯度）
-        weight = torch.randn(dim, device="cuda", requires_grad=False)
-        bias = torch.randn(dim, device="cuda", requires_grad=False)
+        weight = torch.randn(dim, device=DEVICE, requires_grad=False)
+        bias = torch.randn(dim, device=DEVICE, requires_grad=False)
 
         # 计算两种实现的输出
         y_torch = pytorch_layer_norm(x, weight, bias, eps)
@@ -153,8 +157,45 @@ def compare_result():
         assert allclose, f"pytorch_layer_norm 和 triton_layer_norm 输出不一致，shape={shape}！"
 
 
+@tt.perf_report(
+    tt.Benchmark(
+        x_names=["B"],  # batch size
+        x_vals=[2**i for i in range(5, 13)],  # 32 .. 4096
+        x_log=True,
+        line_arg="provider",
+        line_vals=["triton", "torch"],
+        line_names=["Triton", "Torch"],
+        styles=[("blue", "-"), ("green", "-")],
+        ylabel="GB/s",
+        plot_name="layer-norm-performance",
+        args={"C": 1024},  # feature dimension
+    )
+)
+def benchmark(B, C, provider):
+    eps = 1e-5
+    x = torch.randn(B, C, device=DEVICE, dtype=torch.float32, requires_grad=False)
+    weight = torch.randn(C, device=DEVICE, dtype=torch.float32, requires_grad=False)
+    bias = torch.randn(C, device=DEVICE, dtype=torch.float32, requires_grad=False)
+
+    quantiles = [0.5, 0.2, 0.8]
+    if provider == "torch":
+        ms, min_ms, max_ms = tt.do_bench(
+            lambda: pytorch_layer_norm(x, weight, bias, eps), quantiles=quantiles
+        )
+    else:
+        ms, min_ms, max_ms = tt.do_bench(
+            lambda: triton_layer_norm(x, weight, bias, eps), quantiles=quantiles
+        )
+
+    # 粗略按 3 * |x| * sizeof(float) 计算带宽，主要看相对性能
+    gbps = lambda ms: 3 * x.numel() * x.element_size() * 1e-9 / (ms * 1e-3)
+    return gbps(ms), gbps(max_ms), gbps(min_ms)
+
+
 def main():
     compare_result()
+    benchmark.run(print_data=True, show_plots=True)
+
 
 if __name__ == "__main__":
     main()
