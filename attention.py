@@ -22,25 +22,25 @@ def triton_attention(q, k, v, scale=None, is_causal=False):
         *q.stride(), *k.stride(), *v.stride(), *o.stride(),
     )
 
-    torch.cuda.synchronize()
-    torch.cuda.cudart().cudaProfilerStart()
-    triton_flash_attn_kernel[grid](
-        q, k, v, o, scale, is_causal,
-        b, n, s, d,
-        *q.stride(), *k.stride(), *v.stride(), *o.stride(),
-    )
-    torch.cuda.synchronize()
-    torch.cuda.cudart().cudaProfilerStop()
+    # torch.cuda.synchronize()
+    # torch.cuda.cudart().cudaProfilerStart()
+    # triton_flash_attn_kernel[grid](
+    #     q, k, v, o, scale, is_causal,
+    #     b, n, s, d,
+    #     *q.stride(), *k.stride(), *v.stride(), *o.stride(),
+    # )
+    # torch.cuda.synchronize()
+    # torch.cuda.cudart().cudaProfilerStop()
 
     return o
 
 @triton.autotune(
     configs=[
+        # triton.Config({"b_r": 128, "b_c": 64}, num_stages=1, num_warps=4),
+        triton.Config({"b_r": 128, "b_c": 64}, num_stages=1, num_warps=8),
+        # triton.Config({"b_r": 64, "b_c": 64}, num_stages=1, num_warps=4),
         # triton.Config({"b_r": 64, "b_c": 64}, num_stages=1, num_warps=8),
-        # triton.Config({"b_r": 64, "b_c": 128}, num_stages=1, num_warps=8),
-        triton.Config({"b_r": 128, "b_c": 64}, num_stages=1, num_warps=4),
-        # triton.Config({"b_r": 128, "b_c": 64}, num_stages=1, num_warps=8),
-        # triton.Config({"b_r": 128, "b_c": 128}, num_stages=1, num_warps=8),
+        # triton.Config({"b_r": 32, "b_c": 64}, num_stages=1, num_warps=4),
     ],
     key=["b", "s", "n", "d"]
 )
@@ -224,5 +224,5 @@ def benchmark(b, n, d, seq_len, provider):
 
 
 if __name__ == "__main__":
-    test_correctness()
-    # benchmark.run(print_data=True, show_plots=True)
+    # test_correctness()
+    benchmark.run(print_data=True, show_plots=True)
